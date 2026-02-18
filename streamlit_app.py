@@ -45,12 +45,15 @@ SECTOR_BENCHMARKS = {
 def get_sec_feed(ticker_cik_map):
     feed_data = []
     headers = {'User-Agent': 'Ed Espinal Portfolio App (edwardespinal@example.com)'}
+    
+    # Scan Portfolio CIKs
     for ticker, cik in ticker_cik_map.items():
         if not cik: continue
         try:
             url = f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&CIK={cik}&type=&company=&dateb=&owner=include&start=0&count=20&output=atom"
             feed = feedparser.parse(url, request_headers=headers)
             for entry in feed.entries:
+                # Filter for impact filings
                 if any(x in entry.title for x in ['13D', '13G', 'Form 4', '8-K']):
                     feed_data.append({
                         "Source": f"🔔 {ticker}",
@@ -60,6 +63,11 @@ def get_sec_feed(ticker_cik_map):
                         "Link": entry.link
                     })
         except: pass
+    
+    # CRITICAL FIX: Return empty DF if no data found
+    if not feed_data:
+        return pd.DataFrame()
+        
     return pd.DataFrame(feed_data).sort_values(by="Date", ascending=False).head(10)
 
 def get_global_data():
