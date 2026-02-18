@@ -42,7 +42,7 @@ SECTOR_BENCHMARKS = {
     "Communication Services": {"PE": 20.0, "PS": 4.0, "Beta": 1.0, "Growth": 9.0}
 }
 
-# --- 4. DATA: 2026 WHALES (Gerstner + Pelosi + Wood) ---
+# --- 4. DATA: 2026 WHALES (Gerstner + Pelosi + Wood + Ackman) ---
 def get_global_data():
     return pd.DataFrame([
         {"Type": "🐋 WHALE", "Ticker": "AMZN", "Name": "Altimeter (Brad Gerstner)", "Move": "ADD", "Details": "+$400M Cloud/AI Bet", "Date": "02/14/2026"},
@@ -62,7 +62,7 @@ def get_sp500_map():
         return {f"{r[t_col]} - {r['Security']}": r[t_col] for _, r in df.iterrows()}
     except: return {"AAPL - Apple": "AAPL", "AMZN - Amazon": "AMZN"}
 
-# --- 5. SIDEBAR ---
+# --- 5. SIDEBAR: PORTFOLIO MANAGEMENT ---
 if 'portfolio' not in st.session_state:
     if os.path.exists(PORTFOLIO_FILE):
         try:
@@ -70,11 +70,27 @@ if 'portfolio' not in st.session_state:
         except: st.session_state['portfolio'] = ["META", "AMZN", "SOFI", "BMNR"]
     else: st.session_state['portfolio'] = ["META", "AMZN", "SOFI", "BMNR"]
 
-# Dropdown for S&P 500
+st.sidebar.title("💼 My Portfolio")
+new_ticker = st.sidebar.text_input("Add Ticker").upper().strip()
+if new_ticker and new_ticker not in st.session_state['portfolio']:
+    st.session_state['portfolio'].append(new_ticker)
+    with open(PORTFOLIO_FILE, "w") as f: json.dump(st.session_state['portfolio'], f)
+
+# PORTFOLIO LIST WITH DELETE BUTTONS
+for t in st.session_state['portfolio']:
+    side_col1, side_col2 = st.sidebar.columns([4, 1])
+    side_col1.write(t)
+    if side_col2.button("❌", key=f"del_{t}"):
+        st.session_state['portfolio'].remove(t)
+        with open(PORTFOLIO_FILE, "w") as f: json.dump(st.session_state['portfolio'], f)
+        st.rerun()
+
+st.sidebar.markdown("---")
+# MARKET SEARCH DROPDOWN
 sp_map = get_sp500_map()
 options = ["--- Search S&P 500 ---"] + sorted(list(sp_map.keys()))
 dropdown_sel = st.sidebar.selectbox("Market Search (SPY)", options, index=0)
-direct_sel = st.sidebar.text_input("Direct Ticker Entry (e.g. BMNR, RR)").upper().strip()
+direct_sel = st.sidebar.text_input("Direct Ticker Entry (e.g. RR, AVGO)").upper().strip()
 sel = direct_sel if direct_sel else sp_map.get(dropdown_sel, "")
 
 # --- 6. MAIN INTERFACE ---
@@ -84,6 +100,7 @@ st.header("🚨 Portfolio & Discovery Wire")
 wire_df = get_global_data()
 personal_hits = wire_df[wire_df['Ticker'].isin(st.session_state['portfolio'])]
 if not personal_hits.empty:
+    st.subheader("⚠️ Personal Portfolio Alerts")
     st.table(personal_hits)
 st.subheader("🌎 Global Market Discovery Wire")
 st.table(wire_df)
@@ -94,7 +111,7 @@ if sel:
     s = yf.Ticker(sel); i = s.info
     st.header(f"Analysis: {sel} ({i.get('longName', 'N/A')})")
     
-    # Valuation Logic (Manual PEG Fix)
+    # Valuation Logic (Fixed PEG Fallback)
     pe, ps, peg = i.get('trailingPE'), i.get('priceToSalesTrailing12Months'), i.get('pegRatio')
     if not peg and pe:
         growth = i.get('earningsGrowth', i.get('earningsQuarterlyGrowth', i.get('forwardEpsGrowth')))
@@ -162,22 +179,19 @@ if sel:
         next_e = "N/A"
         is_projection = False
         try:
-            # 1. Try confirmed dates
             ed = s.earnings_dates
             if ed is not None and not ed.empty:
                 future_dates = ed[ed.index > datetime.now()]
                 if not future_dates.empty:
                     next_e = future_dates.index[0].strftime("%m/%d/%Y")
             
-            # 2. Try Calendar
             if next_e == "N/A":
                 cal = s.calendar
                 if cal and 'Earnings Date' in cal:
                     next_e = cal['Earnings Date'][0].strftime("%m/%d/%Y")
             
-            # 3. 90-DAY FALLBACK (Projection)
             if next_e == "N/A" and ed is not None and not ed.empty:
-                last_report = ed.index[0] # Usually the most recent
+                last_report = ed.index[0]
                 next_e = (last_report + timedelta(days=90)).strftime("%m/%d/%Y")
                 is_projection = True
         except: pass
