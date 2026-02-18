@@ -142,4 +142,66 @@ if sel:
         h = s.history(period="1y")
         if not h.empty:
             h['MA50'] = h['Close'].rolling(50).mean(); h['MA200'] = h['Close'].rolling(200).mean(); h['RSI'] = calculate_rsi(h['Close'])
-            fig = make_subplots(
+            fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3], vertical_spacing=0.05)
+            fig.add_trace(go.Candlestick(x=h.index, open=h['Open'], high=h['High'], low=h['Low'], close=h['Close'], name='Price'), 1, 1)
+            fig.add_trace(go.Scatter(x=h.index, y=h['MA50'], name='50MA', line=dict(color='orange')), 1, 1)
+            fig.add_trace(go.Scatter(x=h.index, y=h['MA200'], name='200MA', line=dict(color='red')), 1, 1)
+            fig.add_trace(go.Scatter(x=h.index, y=h['RSI'], name='RSI', line=dict(color='blue')), 2, 1)
+            fig.update_layout(height=450, xaxis_rangeslider_visible=False, legend=dict(orientation="h", y=1.1))
+            st.plotly_chart(fig, use_container_width=True)
+
+    st.markdown("---")
+    st.subheader("📊 Industry Benchmarks & Valuation Outlook")
+    f1, f2, f3, f4, f5 = st.columns(5)
+    f1.metric("P/E Ratio", f"{pe}", val_pe); f1.caption(f"Sector Avg: {SECTOR_BENCHMARKS.get(bench, {}).get('PE', 'N/A')}")
+    f2.metric("P/S Ratio", f"{ps}"); f2.caption(f"Sector Avg: {SECTOR_BENCHMARKS.get(bench, {}).get('PS', 'N/A')}")
+    f3.metric("PEG Ratio", f"{peg if peg else 'N/A'}"); f3.caption("Context: < 1.0 is undervalued")
+    f4.metric("Beta", i.get('beta', 1.0), "High" if i.get('beta', 1) > 1 else "Stable")
+    f5.metric("Rev Growth", f"{i.get('revenueGrowth', 0)*100:.1f}%", "Outperforming" if i.get('revenueGrowth', 0) > 0.063 else "Slowing")
+
+    st.markdown("#### 📅 Earnings Surprises & Consensus")
+    e1, e2 = st.columns(2)
+    with e1:
+        st.markdown("**Historical Beat/Miss**")
+        eh = s.earnings_history
+        if eh is not None and not eh.empty:
+            eh_disp = eh[['epsEstimate', 'epsActual', 'surprisePercent']].copy()
+            eh_disp.rename(columns={'epsEstimate': 'EPS Est', 'epsActual': 'EPS Actual', 'surprisePercent': 'Surprise %'}, inplace=True)
+            eh_disp['Surprise %'] = eh_disp['Surprise %'].apply(lambda x: f"{x*100:.1f}%" if pd.notnull(x) else "N/A")
+            st.dataframe(eh_disp, use_container_width=True)
+    with e2:
+        st.markdown("**Forward Guidance**")
+        
+        # --- ROBUST EARNINGS DATE LOGIC ---
+        next_e = "N/A"
+        try:
+            # Source 1: Earnings Dates Table
+            ed = s.earnings_dates
+            if ed is not None and not ed.empty:
+                # Get the first date that is in the future
+                future_dates = ed[ed.index > datetime.now()]
+                if not future_dates.empty:
+                    next_e = future_dates.index[0].strftime("%m/%d/%Y")
+            
+            # Source 2 Fallback: Info Timestamp
+            if next_e == "N/A":
+                ts = i.get('earningsTimestamp')
+                if ts:
+                    next_dt = datetime.fromtimestamp(ts)
+                    if next_dt > datetime.now():
+                        next_e = next_dt.strftime("%m/%d/%Y")
+            
+            # Source 3 Fallback: Basic Calendar
+            if next_e == "N/A":
+                cal = s.calendar
+                if cal and 'Earnings Date' in cal:
+                    next_e = cal['Earnings Date'][0].strftime("%m/%d/%Y")
+        except: pass
+        
+        c_guidance = st.container(border=True)
+        c_guidance.write(f"📅 **Next Earnings (Verified):** {next_e}")
+        c_guidance.write(f"💵 **Est EPS:** ${i.get('forwardEps', 'N/A')}")
+        c_guidance.write(f"📈 **Revenue (Last Q):** {format_num(i.get('totalRevenue', 0))}")
+        c_guidance.write(f"🎯 **Price Target:** ${i.get('targetMeanPrice', 'N/A')}")
+
+    with st.expander("Read Business Summary"): st.write(i.get('longBusinessSummary', 'N/A'))
