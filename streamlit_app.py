@@ -24,14 +24,14 @@ def calculate_rsi(data, window=14):
     rs = gain / loss; return 100 - (100 / (1 + rs))
 
 # --- 2. CONFIG & REFRESH ---
-st.set_page_config(layout="wide", page_title="Institutional Intelligence Terminal")
+st.set_page_config(layout="wide", page_title="Institutional Discovery Terminal")
 PORTFOLIO_FILE = "portfolio.json"
 
 st.sidebar.title("⚡ Terminal Settings")
 if st.sidebar.checkbox("Enable Live Mode (60s Refresh)", value=True):
     st_autorefresh(interval=60 * 1000, key="terminal_refresh")
 
-# --- 3. SECTOR BENCHMARKS (2026 Updated) ---
+# --- 3. SECTOR BENCHMARKS (2026 Context) ---
 SECTOR_BENCHMARKS = {
     "Technology": {"PE": 30.0, "PS": 7.0, "Beta": 1.2, "Growth": 14.0},
     "Financial Services": {"PE": 15.0, "PS": 3.0, "Beta": 1.1, "Growth": 5.0},
@@ -39,12 +39,12 @@ SECTOR_BENCHMARKS = {
     "Consumer Cyclical": {"PE": 25.0, "PS": 2.5, "Beta": 1.2, "Growth": 7.0}
 }
 
-# --- 4. DATA: 2026 WHALES (Gerstner + Pelosi + Wood + Ackman) ---
+# --- 4. DATA: 2026 WHALES (Confirmed Feb 2026 Moves) ---
 def get_global_data():
     return pd.DataFrame([
         {"Type": "🐋 WHALE", "Ticker": "AMZN", "Name": "Altimeter (Brad Gerstner)", "Move": "ADD", "Details": "+$400M Cloud/AI Bet", "Date": "02/14/2026"},
         {"Type": "🐋 WHALE", "Ticker": "AVGO", "Name": "Altimeter (Brad Gerstner)", "Move": "NEW BUY", "Details": "Initiated $228M Stake", "Date": "02/14/2026"},
-        {"Type": "🐋 WHALE", "Ticker": "META", "Name": "Pershing Square (Ackman)", "Move": "NEW BUY", "Details": "2.8M shares ($2.0B)", "Date": "02/11/2026"},
+        {"Type": "🐋 WHALE", "Ticker": "META", "Name": "Pershing Square (Ackman)", "Move": "NEW BUY", "Details": "2.8M shares ($2.0B Stake)", "Date": "02/11/2026"},
         {"Type": "🏛️ POL", "Ticker": "AMZN", "Name": "Nancy Pelosi", "Move": "EXERCISE", "Details": "5,000 shares ($150 Strike)", "Date": "01/16/2026"},
         {"Type": "🐋 WHALE", "Ticker": "SOFI", "Name": "ARK Invest (Wood)", "Move": "BUY", "Details": "2.4M shares Add", "Date": "02/17/2026"}
     ])
@@ -82,8 +82,7 @@ for t in st.session_state['portfolio']:
 
 st.sidebar.markdown("---")
 sp_map = get_sp500_map()
-options = ["--- Search S&P 500 ---"] + sorted(list(sp_map.keys()))
-dropdown_sel = st.sidebar.selectbox("Market Search (SPY)", options, index=0)
+dropdown_sel = st.sidebar.selectbox("Market Search (SPY)", ["--- Search S&P 500 ---"] + sorted(list(sp_map.keys())), index=0)
 direct_sel = st.sidebar.text_input("Direct Ticker Entry (e.g. BMNR, RR)").upper().strip()
 sel = direct_sel if direct_sel else sp_map.get(dropdown_sel, "")
 
@@ -115,6 +114,11 @@ if sel:
     bench = next((k for k in SECTOR_BENCHMARKS if k == sector), None)
     val_pe = f"{((pe-SECTOR_BENCHMARKS[bench]['PE'])/SECTOR_BENCHMARKS[bench]['PE'])*100:+.0f}%" if bench and pe else "N/A"
 
+    # --- RULE OF 40 CALCULATION ---
+    rev_growth = i.get('revenueGrowth', 0)
+    ebitda_margin = i.get('ebitdaMargins', 0)
+    rule_of_40 = (rev_growth + ebitda_margin) * 100
+
     m1, m2, m3 = st.columns(3)
     m1.metric("Price", f"${i.get('currentPrice', 'N/A')}"); m1.caption(f"Sector: **{sector}**")
     m2.metric("Market Cap", format_num(i.get('marketCap')))
@@ -133,7 +137,7 @@ if sel:
         for _, r in t_hits.iterrows():
             with st.container(border=True):
                 st.warning(f"**{r['Type']} Alert:** {r['Name']}")
-                st.write(f"{r['Move']} on {r['Date']} ({r['Details']})")
+                st.write(f"{r['Move']} on {r['Date']}")
 
     with col_chart:
         h = s.history(period="1y")
@@ -148,13 +152,14 @@ if sel:
             st.plotly_chart(fig, use_container_width=True)
 
     st.markdown("---")
-    st.subheader("📊 Industry Benchmarks & Valuation")
+    st.subheader("📊 Industry Benchmarks & Growth Efficiency")
     f1, f2, f3, f4, f5 = st.columns(5)
     f1.metric("P/E Ratio", f"{pe}", val_pe); f1.caption(f"Sector Avg: {SECTOR_BENCHMARKS.get(bench, {}).get('PE', 'N/A')}")
     f2.metric("P/S Ratio", f"{ps}"); f2.caption(f"Sector Avg: {SECTOR_BENCHMARKS.get(bench, {}).get('PS', 'N/A')}")
-    f3.metric("PEG Ratio", f"{peg if peg else 'N/A'}"); f3.caption("Undervalued: < 1.0")
+    f3.metric("Rule of 40 Score", f"{rule_of_40:.1f}%", "Passed" if rule_of_40 >= 40 else "Underperforming")
+    f3.caption("Rev Growth + EBITDA Margin")
     f4.metric("Beta", i.get('beta', 1.0), "High" if i.get('beta', 1) > 1 else "Stable")
-    f5.metric("Rev Growth", f"{i.get('revenueGrowth', 0)*100:.1f}%", "Outperforming" if i.get('revenueGrowth', 0) > 0.063 else "Slowing")
+    f5.metric("Rev Growth (YoY)", f"{rev_growth*100:.1f}%", "Outperforming" if rev_growth > 0.063 else "Slowing")
 
     st.markdown("#### 📅 Earnings Surprises & Verified Guidance")
     e1, e2 = st.columns(2)
@@ -167,29 +172,37 @@ if sel:
             eh_disp['Surprise %'] = eh_disp['Surprise %'].apply(lambda x: f"{x*100:.1f}%" if pd.notnull(x) else "N/A")
             st.dataframe(eh_disp, use_container_width=True)
     with e2:
-        st.markdown("**Forward Guidance (90-Day Fallback)**")
+        st.markdown("**Forward Guidance (Multi-Source Check)**")
         
-        # --- ROBUST EARNINGS DATE LOGIC ---
+        # --- VERIFIED EARNINGS DATE LOGIC ---
         next_e = "N/A"
         is_fallback = False
         try:
-            # 1. Use get_earnings_dates() for confirmed future dates
+            # 1. Primary Source: Confirmed schedule
             ed = s.get_earnings_dates(limit=10)
             if ed is not None and not ed.empty:
                 future_dates = ed[ed.index > datetime.now()]
                 if not future_dates.empty:
                     next_e = future_dates.index[0].strftime("%m/%d/%Y")
             
-            # 2. 90-Day Fallback: Look at the most recent report date
+            # 2. Secondary Source: Info dictionary
+            if next_e == "N/A":
+                ts = i.get('earningsTimestamp')
+                if ts:
+                    next_dt = datetime.fromtimestamp(ts)
+                    if next_dt > datetime.now():
+                        next_e = next_dt.strftime("%m/%d/%Y")
+            
+            # 3. Final Fallback: 90-Day Predictive Projection
             if next_e == "N/A" and ed is not None and not ed.empty:
-                last_report_date = ed.index[0] # The list is usually sorted by date desc
-                next_e = (last_report_date + timedelta(days=90)).strftime("%m/%d/%Y")
+                last_report = ed.index[0]
+                next_e = (last_report + timedelta(days=90)).strftime("%m/%d/%Y")
                 is_fallback = True
         except: pass
         
         c_guidance = st.container(border=True)
-        date_label = "📅 **Projected Date:**" if is_fallback else "📅 **Confirmed Next Earnings:**"
-        c_guidance.write(f"{date_label} {next_e}")
+        label = "📅 **Projected (90-Day Fallback):**" if is_fallback else "📅 **Confirmed Next Earnings:**"
+        c_guidance.write(f"{label} {next_e}")
         c_guidance.write(f"💵 **Est EPS:** ${i.get('forwardEps', 'N/A')}")
         c_guidance.write(f"📈 **Revenue (Last Q):** {format_num(i.get('totalRevenue', 0))}")
         c_guidance.write(f"🎯 **Price Target:** ${i.get('targetMeanPrice', 'N/A')}")
