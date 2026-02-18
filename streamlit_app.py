@@ -257,4 +257,29 @@ if sel:
         HARDCODED_DATES = {
             "PLTR": "05/04/2026", 
             "SOFI": "04/28/2026", 
-            "BMNR": "
+            "BMNR": "04/15/2026", 
+            "AMZN": "04/30/2026", 
+            "META": "04/29/2026",
+            "OPEN": "05/07/2026"
+        }
+        next_e = HARDCODED_DATES.get(sel.upper(), "N/A")
+        label = "✅ Confirmed Date"
+        
+        if next_e == "N/A":
+            try:
+                ed = s.get_earnings_dates(limit=5)
+                if ed is not None and not ed.empty:
+                    future = ed[ed.index > datetime.now()]
+                    if not future.empty:
+                        next_e = future.index[0].strftime("%m/%d/%Y"); label = "✅ Calendar Date"
+                    else:
+                        next_e = (ed.index[0] + timedelta(days=90)).strftime("%m/%d/%Y"); label = "🔮 Projected (90-Day)"
+            except: pass
+        
+        c_guidance = st.container(border=True)
+        c_guidance.write(f"📅 **{label}:** {next_e}")
+        c_guidance.write(f"💵 **Est EPS:** ${i.get('forwardEps', 'N/A')}")
+        c_guidance.write(f"📈 **Revenue (Last Q):** {format_num(i.get('totalRevenue', 0))}")
+        c_guidance.write(f"🎯 **Price Target:** ${i.get('targetMeanPrice', 'N/A')}")
+
+    with st.expander("Read Business Summary"): st.write(i.get('longBusinessSummary', 'N/A'))
