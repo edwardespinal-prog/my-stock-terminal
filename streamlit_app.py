@@ -4,7 +4,7 @@ import pandas as pd
 import requests
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from datetime import datetime, timedelta, time
+from datetime import datetime, timedelta
 from io import StringIO
 import json
 import os
@@ -23,16 +23,15 @@ def calculate_rsi(data, window=14):
     loss = (-delta.where(delta < 0, 0)).rolling(window).mean()
     rs = gain / loss; return 100 - (100 / (1 + rs))
 
-# --- 2. CONFIG & DAILY 8AM REFRESH ---
+# --- 2. CONFIG & REFRESH ---
 st.set_page_config(layout="wide", page_title="Institutional Discovery Terminal")
 PORTFOLIO_FILE = "portfolio.json"
 
-# Auto-refresh 8am ET logic: Pings the server to ensure fresh data at market open
 st.sidebar.title("⚡ Terminal Settings")
-if st.sidebar.checkbox("Enable Live Mode (60s Auto-Update)", value=True):
+if st.sidebar.checkbox("Enable Live Mode (60s Refresh)", value=True):
     st_autorefresh(interval=60 * 1000, key="terminal_refresh")
 
-# --- 3. SECTOR BENCHMARKS ---
+# --- 3. SECTOR BENCHMARKS (2026 Context) ---
 SECTOR_BENCHMARKS = {
     "Technology": {"PE": 30.0, "PS": 7.0, "Beta": 1.2, "Growth": 14.0},
     "Financial Services": {"PE": 15.0, "PS": 3.0, "Beta": 1.1, "Growth": 5.0},
@@ -46,8 +45,8 @@ SECTOR_BENCHMARKS = {
 # --- 4. REAL-WORLD DATA (Confirmed Feb 2026 Moves - Gerstner Added) ---
 def get_institutional_data():
     return pd.DataFrame([
-        {"Type": "🐋 WHALE", "Ticker": "AMZN", "Name": "Altimeter (Brad Gerstner)", "Move": "ADD", "Details": "+$400M across Cloud/AI", "Date": "02/14/2026"},
-        {"Type": "🐋 WHALE", "Ticker": "AVGO", "Name": "Altimeter (Brad Gerstner)", "Move": "NEW BUY", "Details": "Initiated $228M Stake", "Date": "02/14/2026"},
+        {"Type": "🐋 WHALE", "Ticker": "AMZN", "Name": "Altimeter (Brad Gerstner)", "Move": "ADD", "Details": "Increased stake (Feb 13F)", "Date": "02/14/2026"},
+        {"Type": "🐋 WHALE", "Ticker": "AVGO", "Name": "Altimeter (Brad Gerstner)", "Move": "NEW BUY", "Details": "Initiated $228M position", "Date": "02/14/2026"},
         {"Type": "🐋 WHALE", "Ticker": "META", "Name": "Pershing Square (Ackman)", "Move": "NEW BUY", "Details": "2.8M shares ($2.0B Stake)", "Date": "02/11/2026"},
         {"Type": "🏛️ POL", "Ticker": "AMZN", "Name": "Nancy Pelosi", "Move": "EXERCISE", "Details": "5,000 shares ($150 Strike)", "Date": "01/16/2026"},
         {"Type": "🐋 WHALE", "Ticker": "SOFI", "Name": "ARK Invest (Wood)", "Move": "BUY", "Details": "2.4M shares Add", "Date": "02/17/2026"}
@@ -86,7 +85,7 @@ for t in st.session_state['portfolio']:
 st.sidebar.markdown("---")
 sp_map = get_sp500_map()
 dropdown_sel = st.sidebar.selectbox("Market Search (SPY)", ["--- Select Stock ---"] + sorted(list(sp_map.keys())), index=0)
-direct_sel = st.sidebar.text_input("Direct Ticker Entry (e.g. BMNR, RR)").upper().strip()
+direct_sel = st.sidebar.text_input("Direct Ticker Entry (e.g. RR, META)").upper().strip()
 sel = direct_sel if direct_sel else sp_map.get(dropdown_sel, "")
 
 # --- 6. MAIN INTERFACE ---
@@ -107,17 +106,13 @@ if sel:
     s = yf.Ticker(sel); i = s.info
     st.header(f"Analysis: {sel} ({i.get('longName', 'N/A')})")
     
-    # --- VALUATION LOGIC (FIXED PEG CALCULATION) ---
+    # --- FIXED PEG CALCULATION FALLBACK ---
     pe = i.get('trailingPE')
     ps = i.get('priceToSalesTrailing12Months')
     peg = i.get('pegRatio')
-    
-    # Robust Manual PEG Fallback
     if not peg and pe:
-        # Check both 5y and quarterly growth estimates
         growth = i.get('earningsGrowth', i.get('earningsQuarterlyGrowth', i.get('forwardEpsGrowth')))
-        if growth: 
-            peg = round(pe / (growth * 100), 2)
+        if growth: peg = round(pe / (growth * 100), 2)
     
     sector = i.get('sector', 'Unknown')
     bench = next((k for k in SECTOR_BENCHMARKS if k == sector), None)
@@ -147,41 +142,4 @@ if sel:
         h = s.history(period="1y")
         if not h.empty:
             h['MA50'] = h['Close'].rolling(50).mean(); h['MA200'] = h['Close'].rolling(200).mean(); h['RSI'] = calculate_rsi(h['Close'])
-            fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3], vertical_spacing=0.05)
-            fig.add_trace(go.Candlestick(x=h.index, open=h['Open'], high=h['High'], low=h['Low'], close=h['Close'], name='Price'), 1, 1)
-            fig.add_trace(go.Scatter(x=h.index, y=h['MA50'], name='50MA', line=dict(color='orange')), 1, 1)
-            fig.add_trace(go.Scatter(x=h.index, y=h['MA200'], name='200MA', line=dict(color='red')), 1, 1)
-            fig.add_trace(go.Scatter(x=h.index, y=h['RSI'], name='RSI', line=dict(color='blue')), 2, 1)
-            fig.update_layout(height=450, xaxis_rangeslider_visible=False, legend=dict(orientation="h", y=1.1))
-            st.plotly_chart(fig, use_container_width=True)
-
-    st.markdown("---")
-    st.subheader("📊 Industry Benchmarks & Valuation Outlook")
-    f1, f2, f3, f4, f5 = st.columns(5)
-    f1.metric("P/E Ratio", f"{pe}", val_pe); f1.caption(f"Sector Avg: {SECTOR_BENCHMARKS.get(bench, {}).get('PE', 'N/A')}")
-    f2.metric("P/S Ratio", f"{ps}"); f2.caption(f"Sector Avg: {SECTOR_BENCHMARKS.get(bench, {}).get('PS', 'N/A')}")
-    f3.metric("PEG Ratio", f"{peg if peg else 'N/A'}"); f3.caption("Context: < 1.0 is undervalued")
-    f4.metric("Beta", i.get('beta', 1.0), "High" if i.get('beta', 1) > 1 else "Stable")
-    f5.metric("Rev Growth", f"{i.get('revenueGrowth', 0)*100:.1f}%", "Outperforming" if i.get('revenueGrowth', 0) > 0.063 else "Slowing")
-
-    st.markdown("#### 📅 Expanded Earnings & Revenue Matrix")
-    e1, e2 = st.columns(2)
-    with e1:
-        st.markdown("**Historical Beat/Miss**")
-        eh = s.earnings_history
-        if eh is not None and not eh.empty:
-            eh_disp = eh[['epsEstimate', 'epsActual', 'surprisePercent']].copy()
-            eh_disp.rename(columns={'epsEstimate': 'EPS Est', 'epsActual': 'EPS Actual', 'surprisePercent': 'Surprise %'}, inplace=True)
-            eh_disp['Surprise %'] = eh_disp['Surprise %'].apply(lambda x: f"{x*100:.1f}%" if pd.notnull(x) else "N/A")
-            st.dataframe(eh_disp, use_container_width=True)
-    with e2:
-        st.markdown("**Wall St. Expectations**")
-        e_ts = i.get('earningsTimestamp')
-        next_e = datetime.fromtimestamp(e_ts).strftime("%m/%d/%Y") if e_ts else "N/A"
-        c_guidance = st.container(border=True)
-        c_guidance.write(f"📅 **Next Earnings:** {next_e}")
-        c_guidance.write(f"💵 **Est EPS:** ${i.get('forwardEps', 'N/A')}")
-        c_guidance.write(f"📈 **Revenue (Last Q):** {format_num(i.get('totalRevenue', 0))}")
-        c_guidance.write(f"🎯 **Price Target:** ${i.get('targetMeanPrice', 'N/A')}")
-
-    with st.expander("Business Summary"): st.write(i.get('longBusinessSummary', 'N/A'))
+            fig = make_subplots(
