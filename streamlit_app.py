@@ -10,7 +10,7 @@ import json
 import os
 from streamlit_autorefresh import st_autorefresh
 
-# --- 1. GLOBAL HELPERS (Defined first to prevent NameErrors) ---
+# --- 1. GLOBAL HELPERS (Fixed Scoping) ---
 def format_num(num):
     if not num: return "N/A"
     if num >= 1e12: return f"${num/1e12:.2f} T"
@@ -24,11 +24,11 @@ def calculate_rsi(data, window=14):
     rs = gain / loss; return 100 - (100 / (1 + rs))
 
 # --- 2. CONFIG & REFRESH ---
-st.set_page_config(layout="wide", page_title="Institutional Intelligence Terminal")
+st.set_page_config(layout="wide", page_title="Institutional Discovery Terminal")
 PORTFOLIO_FILE = "portfolio.json"
 
 st.sidebar.title("⚡ Terminal Settings")
-if st.sidebar.checkbox("Enable Live Mode (60s Auto-Update)", value=True):
+if st.sidebar.checkbox("Enable Live Mode (60s Refresh)", value=True):
     st_autorefresh(interval=60 * 1000, key="terminal_refresh")
 
 # --- 3. SECTOR BENCHMARKS (2026 Context) ---
@@ -42,12 +42,12 @@ SECTOR_BENCHMARKS = {
     "Communication Services": {"PE": 20.0, "PS": 4.0, "Beta": 1.0, "Growth": 9.0}
 }
 
-# --- 4. DATA: 2026 WHALES & POLS ---
-def get_global_data():
+# --- 4. REAL-WORLD DATA (Confirmed Feb 2026 Moves) ---
+def get_institutional_data():
     return pd.DataFrame([
-        {"Type": "🐋 WHALE", "Ticker": "META", "Name": "Pershing Square (Ackman)", "Move": "NEW BUY", "Details": "2.8M shares ($2.0B)", "Date": "02/11/2026"},
-        {"Type": "🏛️ POL", "Ticker": "AMZN", "Name": "Nancy Pelosi", "Move": "EXERCISE", "Details": "5,000 shares ($150 Strike Calls)", "Date": "01/16/2026"},
-        {"Type": "🏛️ POL", "Ticker": "NVDA", "Name": "Nancy Pelosi", "Move": "EXERCISE", "Details": "5,000 shares ($80 Strike Calls)", "Date": "01/16/2026"},
+        {"Type": "🐋 WHALE", "Ticker": "META", "Name": "Pershing Square (Ackman)", "Move": "NEW BUY", "Details": "2.8M shares ($2.0B Stake)", "Date": "02/11/2026"},
+        {"Type": "🏛️ POL", "Ticker": "AMZN", "Name": "Nancy Pelosi", "Move": "EXERCISE", "Details": "5,000 shares ($150 Strike)", "Date": "01/16/2026"},
+        {"Type": "🏛️ POL", "Ticker": "NVDA", "Name": "Nancy Pelosi", "Move": "EXERCISE", "Details": "5,000 shares ($80 Strike)", "Date": "01/16/2026"},
         {"Type": "🐋 WHALE", "Ticker": "SOFI", "Name": "ARK Invest (Wood)", "Move": "BUY", "Details": "2.4M shares Add", "Date": "02/17/2026"}
     ])
 
@@ -82,18 +82,17 @@ for t in st.session_state['portfolio']:
         with open(PORTFOLIO_FILE, "w") as f: json.dump(st.session_state['portfolio'], f); st.rerun()
 
 st.sidebar.markdown("---")
-# MARKET SEARCH DROPDOWN (RESTORED SPY LIST)
 sp_map = get_sp500_map()
 options = ["--- Search S&P 500 ---"] + sorted(list(sp_map.keys()))
 dropdown_sel = st.sidebar.selectbox("Market Search (SPY)", options, index=0)
-direct_sel = st.sidebar.text_input("Direct Ticker Entry (e.g. RR, BMNR)").upper().strip()
+direct_sel = st.sidebar.text_input("Direct Ticker Entry (e.g. BMNR, RR)").upper().strip()
 sel = direct_sel if direct_sel else sp_map.get(dropdown_sel, "")
 
 # --- 6. MAIN INTERFACE ---
 st.title("📈 Institutional Intelligence Terminal")
 
 st.header("🚨 Portfolio & Discovery Wire")
-wire_df = get_global_data()
+wire_df = get_institutional_data()
 personal_hits = wire_df[wire_df['Ticker'].isin(st.session_state['portfolio'])]
 if not personal_hits.empty:
     st.subheader("⚠️ Personal Portfolio Alerts")
@@ -107,14 +106,18 @@ if sel:
     s = yf.Ticker(sel); i = s.info
     st.header(f"Analysis: {sel} ({i.get('longName', 'N/A')})")
     
-    # Valuation Setup
-    pe, ps, peg = i.get('trailingPE'), i.get('priceToSalesTrailing12Months'), i.get('pegRatio')
+    # --- VALUATION LOGIC (MANUAL PEG FALLBACK) ---
+    pe = i.get('trailingPE')
+    ps = i.get('priceToSalesTrailing12Months')
+    peg = i.get('pegRatio')
+    if not peg and pe:
+        growth = i.get('earningsGrowth', i.get('earningsQuarterlyGrowth'))
+        if growth: peg = round(pe / (growth * 100), 2)
+    
     sector = i.get('sector', 'Unknown')
     bench = next((k for k in SECTOR_BENCHMARKS if k == sector), None)
     val_pe = f"{((pe-SECTOR_BENCHMARKS[bench]['PE'])/SECTOR_BENCHMARKS[bench]['PE'])*100:+.0f}%" if bench and pe else "N/A"
-    val_ps = f"{((ps-SECTOR_BENCHMARKS[bench]['PS'])/SECTOR_BENCHMARKS[bench]['PS'])*100:+.0f}%" if bench and ps else "N/A"
 
-    # MAIN ROW (VALUATION MOVED OUT)
     m1, m2, m3 = st.columns(3)
     price = i.get('currentPrice', i.get('regularMarketPrice', 'N/A'))
     m1.metric("Price", f"${price}"); m1.caption(f"Sector: **{sector}**")
@@ -134,7 +137,7 @@ if sel:
         for _, r in t_hits.iterrows():
             with st.container(border=True):
                 st.warning(f"**{r['Type']} Alert:** {r['Name']}")
-                st.write(f"{r['Move']} on {r['Date']}")
+                st.write(f"{r['Move']} on {r['Date']} ({r['Details']})")
 
     with col_chart:
         h = s.history(period="1y")
@@ -148,13 +151,12 @@ if sel:
             fig.update_layout(height=450, xaxis_rangeslider_visible=False, legend=dict(orientation="h", y=1.1))
             st.plotly_chart(fig, use_container_width=True)
 
-    # 7. INDUSTRY BENCHMARKS & VALUATION (P/E MOVED HERE)
     st.markdown("---")
-    st.subheader("📊 Industry Benchmarks & Valuation Outlook")
+    st.subheader("📊 Industry Benchmarks & Valuation")
     f1, f2, f3, f4, f5 = st.columns(5)
-    f1.metric("P/E Ratio", f"{pe}", val_pe); f1.caption(f"Sector Avg: {SECTOR_BENCHMARKS.get(bench, {}).get('PE', 'N/A')}")
-    f2.metric("P/S Ratio", f"{ps}", val_ps); f2.caption(f"Sector Avg: {SECTOR_BENCHMARKS.get(bench, {}).get('PS', 'N/A')}")
-    f3.metric("PEG Ratio", f"{peg}"); f3.caption("Context: < 1.0 is undervalued")
+    f1.metric("P/E Ratio", f"{pe}", val_pe); f1.caption(f"Sector Avg P/E: {SECTOR_BENCHMARKS.get(bench, {}).get('PE', 'N/A')}")
+    f2.metric("P/S Ratio", f"{ps}"); f2.caption(f"Sector Avg P/S: {SECTOR_BENCHMARKS.get(bench, {}).get('PS', 'N/A')}")
+    f3.metric("PEG Ratio", f"{peg if peg else 'N/A'}"); f3.caption("Context: < 1.0 is undervalued")
     f4.metric("Beta", i.get('beta', 1.0), "High" if i.get('beta', 1) > 1 else "Stable")
     f5.metric("Rev Growth", f"{i.get('revenueGrowth', 0)*100:.1f}%", "Outperforming" if i.get('revenueGrowth', 0) > 0.063 else "Slowing")
 
@@ -169,7 +171,7 @@ if sel:
             eh_disp['Surprise %'] = eh_disp['Surprise %'].apply(lambda x: f"{x*100:.1f}%" if pd.notnull(x) else "N/A")
             st.dataframe(eh_disp, use_container_width=True)
     with e2:
-        st.markdown("**Wall St. Guidance**")
+        st.markdown("**Wall St. Expectations**")
         e_ts = i.get('earningsTimestamp')
         next_e = datetime.fromtimestamp(e_ts).strftime("%m/%d/%Y") if e_ts else "N/A"
         c_guidance = st.container(border=True)
@@ -177,5 +179,7 @@ if sel:
         c_guidance.write(f"💵 **Estimated EPS:** ${i.get('forwardEps', 'N/A')}")
         c_guidance.write(f"📈 **Revenue (Last Q):** {format_num(i.get('totalRevenue', 0))}")
         c_guidance.write(f"🎯 **Price Target:** ${i.get('targetMeanPrice', 'N/A')}")
+
+    with st.expander("Read Business Summary"): st.write(i.get('longBusinessSummary', 'N/A'))
 else:
     st.info("Search a stock in the sidebar to begin analysis.")
