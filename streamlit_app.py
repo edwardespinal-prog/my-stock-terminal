@@ -31,7 +31,7 @@ st.sidebar.title("⚡ Terminal Settings")
 if st.sidebar.checkbox("Enable Live Mode (60s Refresh)", value=True):
     st_autorefresh(interval=60 * 1000, key="terminal_refresh")
 
-# --- 3. SECTOR BENCHMARKS (2026 Context) ---
+# --- 3. SECTOR BENCHMARKS ---
 SECTOR_BENCHMARKS = {
     "Technology": {"PE": 30.0, "PS": 7.0, "Beta": 1.2, "Growth": 14.0},
     "Financial Services": {"PE": 15.0, "PS": 3.0, "Beta": 1.1, "Growth": 5.0},
@@ -41,21 +41,16 @@ SECTOR_BENCHMARKS = {
 }
 
 # --- 4. DATA SOURCES ---
-
-# A. LIVE SEC FEED (The "Lennar/OPEN" Detector)
 @st.cache_data(ttl=300)
 def get_sec_feed(ticker_cik_map):
     feed_data = []
     headers = {'User-Agent': 'Ed Espinal Portfolio App (edwardespinal@example.com)'}
-    
-    # Scan Portfolio CIKs for Insider/13D filings
     for ticker, cik in ticker_cik_map.items():
         if not cik: continue
         try:
             url = f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&CIK={cik}&type=&company=&dateb=&owner=include&start=0&count=20&output=atom"
             feed = feedparser.parse(url, request_headers=headers)
             for entry in feed.entries:
-                # Filter for impact filings
                 if any(x in entry.title for x in ['13D', '13G', 'Form 4', '8-K']):
                     feed_data.append({
                         "Source": f"🔔 {ticker}",
@@ -67,7 +62,6 @@ def get_sec_feed(ticker_cik_map):
         except: pass
     return pd.DataFrame(feed_data).sort_values(by="Date", ascending=False).head(10)
 
-# B. FEATURED 2026 WHALE MOVES (The "Hardcoded" Context)
 def get_global_data():
     return pd.DataFrame([
         {"Type": "🐋 WHALE", "Ticker": "PLTR", "Name": "Scion (Michael Burry)", "Move": "BIG SHORT", "Details": "Bought Puts on 5M shares", "Date": "02/14/2026"},
@@ -93,9 +87,13 @@ def get_sp500_map():
 # --- 5. SIDEBAR ---
 if 'portfolio' not in st.session_state:
     if os.path.exists(PORTFOLIO_FILE):
-        try: with open(PORTFOLIO_FILE, "r") as f: st.session_state['portfolio'] = json.load(f)
-        except: st.session_state['portfolio'] = ["META", "AMZN", "SOFI", "BMNR", "PLTR", "OPEN"]
-    else: st.session_state['portfolio'] = ["META", "AMZN", "SOFI", "BMNR", "PLTR", "OPEN"]
+        try:
+            with open(PORTFOLIO_FILE, "r") as f:
+                st.session_state['portfolio'] = json.load(f)
+        except:
+            st.session_state['portfolio'] = ["META", "AMZN", "SOFI", "BMNR", "PLTR", "OPEN"]
+    else:
+        st.session_state['portfolio'] = ["META", "AMZN", "SOFI", "BMNR", "PLTR", "OPEN"]
 
 st.sidebar.title("💼 My Portfolio")
 new_ticker = st.sidebar.text_input("Add Ticker").upper().strip()
@@ -104,21 +102,19 @@ if new_ticker and new_ticker not in st.session_state['portfolio']:
     with open(PORTFOLIO_FILE, "w") as f: json.dump(st.session_state['portfolio'], f)
 
 for t in st.session_state['portfolio']:
-    side_col1, side_col2 = st.sidebar.columns([4, 1])
-    side_col1.write(t)
-    if side_col2.button("❌", key=f"del_{t}"):
+    c1, c2 = st.sidebar.columns([4, 1])
+    c1.write(t)
+    if c2.button("❌", key=f"del_{t}"):
         st.session_state['portfolio'].remove(t)
         with open(PORTFOLIO_FILE, "w") as f: json.dump(st.session_state['portfolio'], f); st.rerun()
 
 st.sidebar.markdown("---")
-# MARKET SEARCH
 sp_map = get_sp500_map()
-options = ["--- Search S&P 500 ---"] + sorted(list(sp_map.keys()))
-dropdown_sel = st.sidebar.selectbox("Market Search (SPY)", options, index=0)
+dropdown_sel = st.sidebar.selectbox("Market Search (SPY)", ["--- Search S&P 500 ---"] + sorted(list(sp_map.keys())), index=0)
 direct_sel = st.sidebar.text_input("Direct Ticker Entry (e.g. BMNR, RR)").upper().strip()
 sel = direct_sel if direct_sel else sp_map.get(dropdown_sel, "")
 
-# --- 6. GET CIKs ---
+# --- 6. DATA PREP ---
 portfolio_ciks = {}
 for t in st.session_state['portfolio']:
     try:
@@ -129,10 +125,7 @@ for t in st.session_state['portfolio']:
 # --- 7. MAIN INTERFACE ---
 st.title("📈 Institutional Intelligence Terminal")
 
-# A. REGULATORY & WHALE WIRE
 st.header("🚨 Regulatory & Discovery Wire")
-
-# 1. LIVE SEC FEED
 with st.spinner("Scanning SEC Database..."):
     sec_df = get_sec_feed(portfolio_ciks)
 
@@ -143,14 +136,12 @@ if not sec_df.empty:
 else:
     st.info("No recent SEC filings (13D/G/Form 4) for your portfolio.")
 
-# 2. HARDCODED WHALE CONTEXT
 st.subheader("🌎 Featured 2026 Whale Moves")
 wire_df = get_global_data()
 st.table(wire_df)
 
 st.markdown("---")
 
-# B. DEEP DIVE ANALYSIS
 if sel:
     s = yf.Ticker(sel); i = s.info
     st.header(f"Analysis: {sel} ({i.get('longName', 'N/A')})")
@@ -176,7 +167,7 @@ if sel:
 
     col_man, col_chart = st.columns([1, 2])
     with col_man:
-        st.subheader("⚠️ Management & Conflicts")
+        st.subheader("⚠️ Management Check")
         officers = i.get('companyOfficers', [])
         ceo = next((o.get('name') for o in officers if "CEO" in o.get('title', '').upper()), "N/A")
         if sel == "SOFI": ceo = "Anthony Noto"
@@ -184,14 +175,12 @@ if sel:
         elif sel == "PLTR": ceo = "Alex Karp"
         st.write(f"👤 **CEO:** {ceo}")
         
-        # Check Whale Wire for matches
         t_hits = wire_df[wire_df['Ticker'] == sel]
         for _, r in t_hits.iterrows():
             with st.container(border=True):
                 st.warning(f"**{r['Type']} Alert:** {r['Name']}")
                 st.write(f"{r['Move']} on {r['Date']}")
         
-        # Check SEC Feed for matches
         if not sec_df.empty:
             sec_hits = sec_df[sec_df['Description'].str.contains(sel, case=False)]
             if not sec_hits.empty:
@@ -212,7 +201,6 @@ if sel:
             fig.update_layout(height=450, xaxis_rangeslider_visible=False, legend=dict(orientation="h", y=1.1))
             st.plotly_chart(fig, use_container_width=True)
 
-    # RESTORED: Industry Benchmarks
     st.markdown("---")
     st.subheader("📊 Industry Benchmarks & Growth Efficiency")
     f1, f2, f3, f4, f5 = st.columns(5)
@@ -222,7 +210,6 @@ if sel:
     f4.metric("Beta", i.get('beta', 1.0), "High" if i.get('beta', 1) > 1 else "Stable")
     f5.metric("Rev Growth", f"{rev_growth*100:.1f}%", "Outperforming" if rev_growth > 0.063 else "Slowing")
 
-    # RESTORED: Historical Earnings Matrix + 2026 Date Logic
     st.markdown("#### 📅 Earnings Surprises & Verified Guidance")
     e1, e2 = st.columns(2)
     with e1:
@@ -235,22 +222,18 @@ if sel:
             st.dataframe(eh_disp, use_container_width=True)
     with e2:
         st.markdown("**Forward Guidance (2026 Hardcoded)**")
-        # 2026 Verified Calendar
         HARDCODED_DATES = {"PLTR": "05/04/2026", "SOFI": "04/28/2026", "BMNR": "04/15/2026", "AMZN": "04/30/2026", "META": "04/29/2026"}
         next_e = HARDCODED_DATES.get(sel, "N/A")
         label = "✅ Confirmed Date"
-        
         if next_e == "N/A":
             try:
                 ed = s.get_earnings_dates(limit=5)
                 if ed is not None and not ed.empty:
                     future = ed[ed.index > datetime.now()]
                     if not future.empty:
-                        next_e = future.index[0].strftime("%m/%d/%Y")
-                        label = "✅ Calendar Date"
+                        next_e = future.index[0].strftime("%m/%d/%Y"); label = "✅ Calendar Date"
                     else:
-                        next_e = (ed.index[0] + timedelta(days=90)).strftime("%m/%d/%Y")
-                        label = "🔮 Projected (90-Day)"
+                        next_e = (ed.index[0] + timedelta(days=90)).strftime("%m/%d/%Y"); label = "🔮 Projected (90-Day)"
             except: pass
         
         c_guidance = st.container(border=True)
