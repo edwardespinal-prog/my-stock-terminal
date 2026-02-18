@@ -42,12 +42,12 @@ SECTOR_BENCHMARKS = {
     "Communication Services": {"PE": 20.0, "PS": 4.0, "Beta": 1.0, "Growth": 9.0}
 }
 
-# --- 4. REAL-WORLD DATA (Confirmed Feb 2026 Moves - Gerstner Added) ---
-def get_institutional_data():
+# --- 4. DATA: 2026 WHALES (Gerstner + Pelosi + Wood) ---
+def get_global_data():
     return pd.DataFrame([
-        {"Type": "🐋 WHALE", "Ticker": "AMZN", "Name": "Altimeter (Brad Gerstner)", "Move": "ADD", "Details": "Increased stake (Feb 13F)", "Date": "02/14/2026"},
-        {"Type": "🐋 WHALE", "Ticker": "AVGO", "Name": "Altimeter (Brad Gerstner)", "Move": "NEW BUY", "Details": "Initiated $228M position", "Date": "02/14/2026"},
-        {"Type": "🐋 WHALE", "Ticker": "META", "Name": "Pershing Square (Ackman)", "Move": "NEW BUY", "Details": "2.8M shares ($2.0B Stake)", "Date": "02/11/2026"},
+        {"Type": "🐋 WHALE", "Ticker": "AMZN", "Name": "Altimeter (Brad Gerstner)", "Move": "ADD", "Details": "+$400M Cloud/AI Bet", "Date": "02/14/2026"},
+        {"Type": "🐋 WHALE", "Ticker": "AVGO", "Name": "Altimeter (Brad Gerstner)", "Move": "NEW BUY", "Details": "Initiated $228M Stake", "Date": "02/14/2026"},
+        {"Type": "🐋 WHALE", "Ticker": "META", "Name": "Pershing Square (Ackman)", "Move": "NEW BUY", "Details": "2.8M shares ($2.0B)", "Date": "02/11/2026"},
         {"Type": "🏛️ POL", "Ticker": "AMZN", "Name": "Nancy Pelosi", "Move": "EXERCISE", "Details": "5,000 shares ($150 Strike)", "Date": "01/16/2026"},
         {"Type": "🐋 WHALE", "Ticker": "SOFI", "Name": "ARK Invest (Wood)", "Move": "BUY", "Details": "2.4M shares Add", "Date": "02/17/2026"}
     ])
@@ -60,7 +60,7 @@ def get_sp500_map():
         df = pd.read_html(StringIO(res.text))[0]
         t_col = 'Symbol' if 'Symbol' in df.columns else 'Ticker symbol'
         return {f"{r[t_col]} - {r['Security']}": r[t_col] for _, r in df.iterrows()}
-    except: return {"AAPL - Apple": "AAPL", "AMZN - Amazon": "AMZN", "NVDA - NVIDIA": "NVDA"}
+    except: return {"AAPL - Apple": "AAPL", "AMZN - Amazon": "AMZN"}
 
 # --- 5. SIDEBAR ---
 if 'portfolio' not in st.session_state:
@@ -70,34 +70,22 @@ if 'portfolio' not in st.session_state:
         except: st.session_state['portfolio'] = ["META", "AMZN", "SOFI", "BMNR"]
     else: st.session_state['portfolio'] = ["META", "AMZN", "SOFI", "BMNR"]
 
-st.sidebar.title("💼 My Portfolio")
-new_t = st.sidebar.text_input("Add Ticker").upper().strip()
-if new_t and new_t not in st.session_state['portfolio']:
-    st.session_state['portfolio'].append(new_t)
-    with open(PORTFOLIO_FILE, "w") as f: json.dump(st.session_state['portfolio'], f)
-
-for t in st.session_state['portfolio']:
-    c1, c2 = st.sidebar.columns([4,1]); c1.write(t)
-    if c2.button("❌", key=f"d_{t}"):
-        st.session_state['portfolio'].remove(t)
-        with open(PORTFOLIO_FILE, "w") as f: json.dump(st.session_state['portfolio'], f); st.rerun()
-
-st.sidebar.markdown("---")
+# Dropdown for S&P 500
 sp_map = get_sp500_map()
-dropdown_sel = st.sidebar.selectbox("Market Search (SPY)", ["--- Select Stock ---"] + sorted(list(sp_map.keys())), index=0)
-direct_sel = st.sidebar.text_input("Direct Ticker Entry (e.g. RR, META)").upper().strip()
+options = ["--- Search S&P 500 ---"] + sorted(list(sp_map.keys()))
+dropdown_sel = st.sidebar.selectbox("Market Search (SPY)", options, index=0)
+direct_sel = st.sidebar.text_input("Direct Ticker Entry (e.g. BMNR, RR)").upper().strip()
 sel = direct_sel if direct_sel else sp_map.get(dropdown_sel, "")
 
 # --- 6. MAIN INTERFACE ---
 st.title("📈 Institutional Intelligence Terminal")
 
 st.header("🚨 Portfolio & Discovery Wire")
-wire_df = get_institutional_data()
+wire_df = get_global_data()
 personal_hits = wire_df[wire_df['Ticker'].isin(st.session_state['portfolio'])]
 if not personal_hits.empty:
-    st.subheader("⚠️ Personal Portfolio Alerts")
     st.table(personal_hits)
-st.subheader("🌎 Global Discovery Wire")
+st.subheader("🌎 Global Market Discovery Wire")
 st.table(wire_df)
 
 st.markdown("---")
@@ -106,10 +94,8 @@ if sel:
     s = yf.Ticker(sel); i = s.info
     st.header(f"Analysis: {sel} ({i.get('longName', 'N/A')})")
     
-    # --- FIXED PEG CALCULATION FALLBACK ---
-    pe = i.get('trailingPE')
-    ps = i.get('priceToSalesTrailing12Months')
-    peg = i.get('pegRatio')
+    # Valuation Logic (Manual PEG Fix)
+    pe, ps, peg = i.get('trailingPE'), i.get('priceToSalesTrailing12Months'), i.get('pegRatio')
     if not peg and pe:
         growth = i.get('earningsGrowth', i.get('earningsQuarterlyGrowth', i.get('forwardEpsGrowth')))
         if growth: peg = round(pe / (growth * 100), 2)
@@ -119,7 +105,7 @@ if sel:
     val_pe = f"{((pe-SECTOR_BENCHMARKS[bench]['PE'])/SECTOR_BENCHMARKS[bench]['PE'])*100:+.0f}%" if bench and pe else "N/A"
 
     m1, m2, m3 = st.columns(3)
-    m1.metric("Price", f"${i.get('currentPrice', 'N/A')}"); m1.caption(f"Sector: **{sector}**")
+    m1.metric("Price", f"${i.get('currentPrice', 'N/A')}")
     m2.metric("Market Cap", format_num(i.get('marketCap')))
     m3.metric("Analyst Target", f"${i.get('targetMeanPrice', 'N/A')}")
 
@@ -151,7 +137,7 @@ if sel:
             st.plotly_chart(fig, use_container_width=True)
 
     st.markdown("---")
-    st.subheader("📊 Industry Benchmarks & Valuation Outlook")
+    st.subheader("📊 Industry Benchmarks & Valuation")
     f1, f2, f3, f4, f5 = st.columns(5)
     f1.metric("P/E Ratio", f"{pe}", val_pe); f1.caption(f"Sector Avg: {SECTOR_BENCHMARKS.get(bench, {}).get('PE', 'N/A')}")
     f2.metric("P/S Ratio", f"{ps}"); f2.caption(f"Sector Avg: {SECTOR_BENCHMARKS.get(bench, {}).get('PS', 'N/A')}")
@@ -159,10 +145,10 @@ if sel:
     f4.metric("Beta", i.get('beta', 1.0), "High" if i.get('beta', 1) > 1 else "Stable")
     f5.metric("Rev Growth", f"{i.get('revenueGrowth', 0)*100:.1f}%", "Outperforming" if i.get('revenueGrowth', 0) > 0.063 else "Slowing")
 
-    st.markdown("#### 📅 Earnings Surprises & Consensus")
+    st.markdown("#### 📅 Earnings Surprises & Consolidated Consensus")
     e1, e2 = st.columns(2)
     with e1:
-        st.markdown("**Historical Beat/Miss**")
+        st.markdown("**Historical Matrix**")
         eh = s.earnings_history
         if eh is not None and not eh.empty:
             eh_disp = eh[['epsEstimate', 'epsActual', 'surprisePercent']].copy()
@@ -170,38 +156,37 @@ if sel:
             eh_disp['Surprise %'] = eh_disp['Surprise %'].apply(lambda x: f"{x*100:.1f}%" if pd.notnull(x) else "N/A")
             st.dataframe(eh_disp, use_container_width=True)
     with e2:
-        st.markdown("**Forward Guidance**")
+        st.markdown("**Forward Guidance (Verified Date)**")
         
-        # --- ROBUST EARNINGS DATE LOGIC ---
+        # --- ROBUST EARNINGS DATE LOGIC (90-DAY FALLBACK) ---
         next_e = "N/A"
+        is_projection = False
         try:
-            # Source 1: Earnings Dates Table
+            # 1. Try confirmed dates
             ed = s.earnings_dates
             if ed is not None and not ed.empty:
-                # Get the first date that is in the future
                 future_dates = ed[ed.index > datetime.now()]
                 if not future_dates.empty:
                     next_e = future_dates.index[0].strftime("%m/%d/%Y")
             
-            # Source 2 Fallback: Info Timestamp
-            if next_e == "N/A":
-                ts = i.get('earningsTimestamp')
-                if ts:
-                    next_dt = datetime.fromtimestamp(ts)
-                    if next_dt > datetime.now():
-                        next_e = next_dt.strftime("%m/%d/%Y")
-            
-            # Source 3 Fallback: Basic Calendar
+            # 2. Try Calendar
             if next_e == "N/A":
                 cal = s.calendar
                 if cal and 'Earnings Date' in cal:
                     next_e = cal['Earnings Date'][0].strftime("%m/%d/%Y")
+            
+            # 3. 90-DAY FALLBACK (Projection)
+            if next_e == "N/A" and ed is not None and not ed.empty:
+                last_report = ed.index[0] # Usually the most recent
+                next_e = (last_report + timedelta(days=90)).strftime("%m/%d/%Y")
+                is_projection = True
         except: pass
         
         c_guidance = st.container(border=True)
-        c_guidance.write(f"📅 **Next Earnings (Verified):** {next_e}")
+        date_label = "📅 **Projected (90-Day Fallback):**" if is_projection else "📅 **Confirmed Next Earnings:**"
+        c_guidance.write(f"{date_label} {next_e}")
         c_guidance.write(f"💵 **Est EPS:** ${i.get('forwardEps', 'N/A')}")
         c_guidance.write(f"📈 **Revenue (Last Q):** {format_num(i.get('totalRevenue', 0))}")
         c_guidance.write(f"🎯 **Price Target:** ${i.get('targetMeanPrice', 'N/A')}")
 
-    with st.expander("Read Business Summary"): st.write(i.get('longBusinessSummary', 'N/A'))
+    with st.expander("Business Summary"): st.write(i.get('longBusinessSummary', 'N/A'))
