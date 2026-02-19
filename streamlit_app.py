@@ -31,7 +31,7 @@ st.sidebar.title("⚡ Terminal Settings")
 if st.sidebar.checkbox("Enable Live Mode (60s Refresh)", value=True):
     st_autorefresh(interval=60 * 1000, key="terminal_refresh")
 
-# --- 3. SECTOR BENCHMARKS (2026 Context) ---
+# --- 3. SECTOR BENCHMARKS ---
 SECTOR_BENCHMARKS = {
     "Technology": {"PE": 30.0, "PS": 7.0, "Beta": 1.2, "Growth": 14.0},
     "Financial Services": {"PE": 15.0, "PS": 3.0, "Beta": 1.1, "Growth": 5.0},
@@ -42,7 +42,7 @@ SECTOR_BENCHMARKS = {
 
 # --- 4. DATA SOURCES ---
 
-# A. LIVE SEC FEED (The "Lennar/OPEN" Detector)
+# A. LIVE SEC FEED (Robust Fix)
 @st.cache_data(ttl=300)
 def get_sec_feed(ticker_cik_map):
     feed_data = []
@@ -63,9 +63,14 @@ def get_sec_feed(ticker_cik_map):
                         "Link": entry.link
                     })
         except: pass
+    
+    # SAFETY CHECK: If empty, return empty DF with columns
+    if not feed_data:
+        return pd.DataFrame(columns=["Source", "Filing", "Description", "Date", "Link"])
+        
     return pd.DataFrame(feed_data).sort_values(by="Date", ascending=False).head(10)
 
-# B. FEATURED 2026 WHALE MOVES (Hardcoded Context)
+# B. FEATURED 2026 WHALE MOVES
 def get_global_data():
     return pd.DataFrame([
         {"Type": "🐋 WHALE", "Ticker": "PLTR", "Name": "Scion (Michael Burry)", "Move": "BIG SHORT", "Details": "Bought Puts on 5M shares", "Date": "02/14/2026"},
@@ -88,27 +93,21 @@ def get_sp500_map():
         return {f"{r[t_col]} - {r['Security']}": r[t_col] for _, r in df.iterrows()}
     except: return {"AAPL - Apple": "AAPL", "PLTR - Palantir": "PLTR", "SOFI - SoFi": "SOFI"}
 
-# C. C-LEVEL INSIDER TRACKER (New Feature)
+# C. C-SUITE INSIDER TRACKER
 def get_c_suite_buys(ticker_obj):
     try:
-        # Note: yfinance property access varies by version, try safe access
         insiders = ticker_obj.insider_purchases
         if insiders is None or insiders.empty:
             return pd.DataFrame()
         
-        # Filter 1: C-Level Roles only
         c_level_terms = ['CEO', 'CFO', 'COO', 'CTO', 'PRESIDENT', 'CHIEF', 'EXEC']
         
-        # Ensure we have a string column for Position
         if 'Position' in insiders.columns:
-            # Case insensitive search for C-level titles
             c_suite = insiders[insiders['Position'].str.upper().str.contains('|'.join(c_level_terms), na=False)]
         else:
             return pd.DataFrame()
 
-        # Filter 2: Last 12 Months
         if 'Date' in c_suite.columns:
-            # Ensure Date is datetime
             c_suite['Date'] = pd.to_datetime(c_suite['Date'])
             cutoff = datetime.now() - timedelta(days=365)
             recent_buys = c_suite[c_suite['Date'] > cutoff]
@@ -122,12 +121,9 @@ def get_c_suite_buys(ticker_obj):
 if 'portfolio' not in st.session_state:
     if os.path.exists(PORTFOLIO_FILE):
         try:
-            with open(PORTFOLIO_FILE, "r") as f:
-                st.session_state['portfolio'] = json.load(f)
-        except:
-            st.session_state['portfolio'] = ["META", "AMZN", "SOFI", "BMNR", "PLTR", "OPEN"]
-    else:
-        st.session_state['portfolio'] = ["META", "AMZN", "SOFI", "BMNR", "PLTR", "OPEN"]
+            with open(PORTFOLIO_FILE, "r") as f: st.session_state['portfolio'] = json.load(f)
+        except: st.session_state['portfolio'] = ["META", "AMZN", "SOFI", "BMNR", "PLTR", "OPEN"]
+    else: st.session_state['portfolio'] = ["META", "AMZN", "SOFI", "BMNR", "PLTR", "OPEN"]
 
 st.sidebar.title("💼 My Portfolio")
 new_ticker = st.sidebar.text_input("Add Ticker").upper().strip()
@@ -214,7 +210,7 @@ if sel:
         elif sel == "PLTR": ceo = "Alex Karp"
         st.write(f"👤 **CEO:** {ceo}")
         
-        # --- NEW: C-SUITE INSIDER BUYS ---
+        # C-SUITE INSIDER BUYS
         st.markdown("#### 🟢 C-Suite Buys (L12M)")
         c_buys = get_c_suite_buys(s)
         if not c_buys.empty:
