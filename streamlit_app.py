@@ -91,6 +91,7 @@ def get_sp500_map():
 # C. C-LEVEL INSIDER TRACKER (New Feature)
 def get_c_suite_buys(ticker_obj):
     try:
+        # Note: yfinance property access varies by version, try safe access
         insiders = ticker_obj.insider_purchases
         if insiders is None or insiders.empty:
             return pd.DataFrame()
@@ -120,9 +121,13 @@ def get_c_suite_buys(ticker_obj):
 # --- 5. SIDEBAR ---
 if 'portfolio' not in st.session_state:
     if os.path.exists(PORTFOLIO_FILE):
-        try: with open(PORTFOLIO_FILE, "r") as f: st.session_state['portfolio'] = json.load(f)
-        except: st.session_state['portfolio'] = ["META", "AMZN", "SOFI", "BMNR", "PLTR", "OPEN"]
-    else: st.session_state['portfolio'] = ["META", "AMZN", "SOFI", "BMNR", "PLTR", "OPEN"]
+        try:
+            with open(PORTFOLIO_FILE, "r") as f:
+                st.session_state['portfolio'] = json.load(f)
+        except:
+            st.session_state['portfolio'] = ["META", "AMZN", "SOFI", "BMNR", "PLTR", "OPEN"]
+    else:
+        st.session_state['portfolio'] = ["META", "AMZN", "SOFI", "BMNR", "PLTR", "OPEN"]
 
 st.sidebar.title("💼 My Portfolio")
 new_ticker = st.sidebar.text_input("Add Ticker").upper().strip()
