@@ -42,35 +42,54 @@ SECTOR_BENCHMARKS = {
 
 # --- 4. DATA SOURCES ---
 
-# A. LIVE SEC FEED (Robust Fix)
+# A. LIVE SEC FEED (Fixed: using action=getcompany)
 @st.cache_data(ttl=300)
-def get_sec_feed(ticker_cik_map):
+def get_sec_feed(user_portfolio):
     feed_data = []
-    headers = {'User-Agent': 'Ed Espinal Portfolio App (edwardespinal@example.com)'}
+    headers = {'User-Agent': 'Institutional Terminal User (admin@example.com)'}
     
-    for ticker, cik in ticker_cik_map.items():
-        if not cik: continue
+    # 1. HARDCODED CIKs (Pre-Loaded for speed)
+    KNOWN_CIKS = {
+        "OPEN": "0001801169", "SOFI": "0001818874", "PLTR": "0001321655", 
+        "AMZN": "0001018724", "META": "0001326801", "BMNR": "0001776408", 
+        "UBER": "0001543151", "SNOW": "0001640147", "AMD":  "0000002488", 
+        "NVDA": "0001045810", "TSLA": "0001318605", "AAPL": "0000320193", 
+        "MSFT": "0000789019", "GOOG": "0001652044", "COIN": "0001679788"
+    }
+
+    scan_list = {}
+    for ticker in user_portfolio:
+        if ticker in KNOWN_CIKS:
+            scan_list[ticker] = KNOWN_CIKS[ticker]
+        else:
+            try:
+                inf = yf.Ticker(ticker).info
+                if 'cik' in inf: scan_list[ticker] = inf['cik']
+            except: pass
+
+    for ticker, cik in scan_list.items():
         try:
-            url = f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&CIK={cik}&type=&company=&dateb=&owner=include&start=0&count=20&output=atom"
+            # FIX: getcompany ensures the SEC searches the specific ticker history
+            url = f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={cik}&type=&dateb=&owner=include&start=0&count=40&output=atom"
             feed = feedparser.parse(url, request_headers=headers)
             for entry in feed.entries:
-                if any(x in entry.title for x in ['13D', '13G', 'Form 4', '8-K']):
+                title_upper = entry.title.upper()
+                if any(x in title_upper for x in ['13D', '13G', 'FORM 4', '8-K', 'SC 13']):
                     feed_data.append({
                         "Source": f"🔔 {ticker}",
-                        "Filing": entry.title.split('-')[0].strip(),
+                        "Filing": entry.title.split('-')[0].strip() if '-' in entry.title else "FILING",
                         "Description": entry.title,
                         "Date": entry.updated[:10],
                         "Link": entry.link
                     })
         except: pass
     
-    # SAFETY CHECK: If empty, return empty DF with columns
     if not feed_data:
         return pd.DataFrame(columns=["Source", "Filing", "Description", "Date", "Link"])
         
     return pd.DataFrame(feed_data).sort_values(by="Date", ascending=False).head(10)
 
-# B. FEATURED 2026 WHALE MOVES
+# B. FEATURED WHALE MOVES
 def get_global_data():
     return pd.DataFrame([
         {"Type": "🐋 WHALE", "Ticker": "PLTR", "Name": "Scion (Michael Burry)", "Move": "BIG SHORT", "Details": "Bought Puts on 5M shares", "Date": "02/14/2026"},
@@ -97,25 +116,18 @@ def get_sp500_map():
 def get_c_suite_buys(ticker_obj):
     try:
         insiders = ticker_obj.insider_purchases
-        if insiders is None or insiders.empty:
-            return pd.DataFrame()
-        
+        if insiders is None or insiders.empty: return pd.DataFrame()
         c_level_terms = ['CEO', 'CFO', 'COO', 'CTO', 'PRESIDENT', 'CHIEF', 'EXEC']
-        
         if 'Position' in insiders.columns:
             c_suite = insiders[insiders['Position'].str.upper().str.contains('|'.join(c_level_terms), na=False)]
-        else:
-            return pd.DataFrame()
-
+        else: return pd.DataFrame()
         if 'Date' in c_suite.columns:
             c_suite['Date'] = pd.to_datetime(c_suite['Date'])
             cutoff = datetime.now() - timedelta(days=365)
             recent_buys = c_suite[c_suite['Date'] > cutoff]
             return recent_buys[['Insider', 'Position', 'Date', 'Shares', 'Value']].sort_values(by='Date', ascending=False)
-            
         return pd.DataFrame()
-    except:
-        return pd.DataFrame()
+    except: return pd.DataFrame()
 
 # --- 5. SIDEBAR ---
 if 'portfolio' not in st.session_state:
@@ -139,29 +151,19 @@ for t in st.session_state['portfolio']:
         with open(PORTFOLIO_FILE, "w") as f: json.dump(st.session_state['portfolio'], f); st.rerun()
 
 st.sidebar.markdown("---")
-# MARKET SEARCH
 sp_map = get_sp500_map()
 options = ["--- Search S&P 500 ---"] + sorted(list(sp_map.keys()))
 dropdown_sel = st.sidebar.selectbox("Market Search (SPY)", options, index=0)
 direct_sel = st.sidebar.text_input("Direct Ticker Entry (e.g. BMNR, RR)").upper().strip()
 sel = direct_sel if direct_sel else sp_map.get(dropdown_sel, "")
 
-# --- 6. GET CIKs ---
-portfolio_ciks = {}
-for t in st.session_state['portfolio']:
-    try:
-        inf = yf.Ticker(t).info
-        if 'cik' in inf: portfolio_ciks[t] = inf['cik']
-    except: pass
-
 # --- 7. MAIN INTERFACE ---
 st.title("📈 Institutional Intelligence Terminal")
 
-# A. REGULATORY & WHALE WIRE
+# A. REGULATORY WIRE
 st.header("🚨 Regulatory & Discovery Wire")
-
 with st.spinner("Scanning SEC Database..."):
-    sec_df = get_sec_feed(portfolio_ciks)
+    sec_df = get_sec_feed(st.session_state['portfolio'])
 
 if not sec_df.empty:
     st.subheader("🔥 Live SEC Filings (Portfolio)")
@@ -176,12 +178,11 @@ st.table(wire_df)
 
 st.markdown("---")
 
-# B. DEEP DIVE ANALYSIS
+# B. ANALYSIS
 if sel:
     s = yf.Ticker(sel); i = s.info
     st.header(f"Analysis: {sel} ({i.get('longName', 'N/A')})")
     
-    # Valuation & Rule of 40
     pe, ps, peg = i.get('trailingPE'), i.get('priceToSalesTrailing12Months'), i.get('pegRatio')
     if not peg and pe:
         growth = i.get('earningsGrowth', i.get('earningsQuarterlyGrowth', i.get('forwardEpsGrowth')))
@@ -207,18 +208,14 @@ if sel:
         ceo = next((o.get('name') for o in officers if "CEO" in o.get('title', '').upper()), "N/A")
         if sel == "SOFI": ceo = "Anthony Noto"
         elif sel == "OPEN": ceo = "Kaz Nejatian"
-        elif sel == "PLTR": ceo = "Alex Karp"
         st.write(f"👤 **CEO:** {ceo}")
         
-        # C-SUITE INSIDER BUYS
         st.markdown("#### 🟢 C-Suite Buys (L12M)")
         c_buys = get_c_suite_buys(s)
         if not c_buys.empty:
             st.dataframe(c_buys, hide_index=True, use_container_width=True)
-        else:
-            st.caption("No C-Level open market purchases detected in last 12 months.")
+        else: st.caption("No C-Level open market purchases detected.")
 
-        # Whale & SEC Alerts
         t_hits = wire_df[wire_df['Ticker'] == sel]
         if not t_hits.empty:
             st.markdown("#### 🐋 Whale Alerts")
@@ -269,7 +266,6 @@ if sel:
         HARDCODED_DATES = {"PLTR": "05/04/2026", "SOFI": "04/28/2026", "BMNR": "04/15/2026", "AMZN": "04/30/2026", "META": "04/29/2026"}
         next_e = HARDCODED_DATES.get(sel, "N/A")
         label = "✅ Confirmed Date"
-        
         if next_e == "N/A":
             try:
                 ed = s.get_earnings_dates(limit=5)
@@ -282,7 +278,6 @@ if sel:
                         next_e = (ed.index[0] + timedelta(days=90)).strftime("%m/%d/%Y")
                         label = "🔮 Projected (90-Day)"
             except: pass
-        
         c_guidance = st.container(border=True)
         c_guidance.write(f"📅 **{label}:** {next_e}")
         c_guidance.write(f"💵 **Est EPS:** ${i.get('forwardEps', 'N/A')}")
