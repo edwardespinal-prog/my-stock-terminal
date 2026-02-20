@@ -5,7 +5,6 @@ import requests
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
-import feedparser
 import json
 import os
 from streamlit_autorefresh import st_autorefresh
@@ -31,103 +30,61 @@ st.sidebar.title("⚡ Terminal Settings")
 if st.sidebar.checkbox("Enable Live Mode (60s Refresh)", value=True):
     st_autorefresh(interval=60 * 1000, key="terminal_refresh")
 
-# --- 3. SECTOR BENCHMARKS ---
-SECTOR_BENCHMARKS = {
-    "Technology": {"PE": 30.0, "PS": 7.0, "Beta": 1.2, "Growth": 14.0},
-    "Financial Services": {"PE": 15.0, "PS": 3.0, "Beta": 1.1, "Growth": 5.0},
-    "Healthcare": {"PE": 25.0, "PS": 5.0, "Beta": 0.8, "Growth": 8.0},
-    "Consumer Cyclical": {"PE": 25.0, "PS": 2.5, "Beta": 1.2, "Growth": 7.0},
-    "Communication Services": {"PE": 20.0, "PS": 4.0, "Beta": 1.0, "Growth": 9.0}
-}
+# --- 3. FMP API INTEGRATION ---
+st.sidebar.title("🔑 Data Engine")
+fmp_key = st.sidebar.text_input("FMP API Key (Free Tier)", type="password", help="Get this from site.financialmodelingprep.com")
 
-# --- 4. DATA SOURCES ---
-
-# A. LIVE SEC FEED (Fixed: using action=getcompany)
 @st.cache_data(ttl=300)
-def get_sec_feed(user_portfolio):
-    feed_data = []
-    headers = {'User-Agent': 'Institutional Terminal User (admin@example.com)'}
-    
-    # 1. HARDCODED CIKs (Pre-Loaded for speed)
-    KNOWN_CIKS = {
-        "OPEN": "0001801169", "SOFI": "0001818874", "PLTR": "0001321655", 
-        "AMZN": "0001018724", "META": "0001326801", "BMNR": "0001776408", 
-        "UBER": "0001543151", "SNOW": "0001640147", "AMD":  "0000002488", 
-        "NVDA": "0001045810", "TSLA": "0001318605", "AAPL": "0000320193", 
-        "MSFT": "0000789019", "GOOG": "0001652044", "COIN": "0001679788"
-    }
-
-    scan_list = {}
-    for ticker in user_portfolio:
-        if ticker in KNOWN_CIKS:
-            scan_list[ticker] = KNOWN_CIKS[ticker]
-        else:
-            try:
-                inf = yf.Ticker(ticker).info
-                if 'cik' in inf: scan_list[ticker] = inf['cik']
-            except: pass
-
-    for ticker, cik in scan_list.items():
+def get_live_insider_feed(portfolio, api_key):
+    if not api_key: return pd.DataFrame()
+    feed = []
+    for ticker in portfolio:
         try:
-            # FIX: getcompany ensures the SEC searches the specific ticker history
-            url = f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={cik}&type=&dateb=&owner=include&start=0&count=40&output=atom"
-            feed = feedparser.parse(url, request_headers=headers)
-            for entry in feed.entries:
-                title_upper = entry.title.upper()
-                if any(x in title_upper for x in ['13D', '13G', 'FORM 4', '8-K', 'SC 13']):
-                    feed_data.append({
-                        "Source": f"🔔 {ticker}",
-                        "Filing": entry.title.split('-')[0].strip() if '-' in entry.title else "FILING",
-                        "Description": entry.title,
-                        "Date": entry.updated[:10],
-                        "Link": entry.link
+            url = f"https://financialmodelingprep.com/api/v4/insider-trading?symbol={ticker}&page=0&apikey={api_key}"
+            data = requests.get(url, timeout=5).json()
+            if isinstance(data, list):
+                # Filter for Buys only (Acquisition)
+                buys = [x for x in data if x.get('acquistionOrDisposition') == 'A' or 'P-Purchase' in str(x.get('transactionType', ''))]
+                for b in buys[:3]: # Top 3 recent buys per ticker
+                    feed.append({
+                        "Ticker": ticker,
+                        "Date": b.get('transactionDate', '')[:10],
+                        "Insider": b.get('reportingName', 'Unknown').title(),
+                        "Title": b.get('typeOfOwner', 'Exec').title(),
+                        "Shares": f"{b.get('securitiesTransacted', 0):,}",
+                        "Price": f"${b.get('price', 0):.2f}",
+                        "Value": f"${(b.get('securitiesTransacted', 0) * b.get('price', 0)):,.0f}"
                     })
         except: pass
     
-    if not feed_data:
-        return pd.DataFrame(columns=["Source", "Filing", "Description", "Date", "Link"])
-        
-    return pd.DataFrame(feed_data).sort_values(by="Date", ascending=False).head(10)
+    if feed:
+        return pd.DataFrame(feed).sort_values(by="Date", ascending=False)
+    return pd.DataFrame(columns=["Ticker", "Date", "Insider", "Title", "Shares", "Price", "Value"])
 
-# B. FEATURED WHALE MOVES
+def get_verified_earnings(ticker, api_key):
+    if not api_key: return "API Key Required"
+    try:
+        url = f"https://financialmodelingprep.com/api/v3/historical/earning_calendar/{ticker}?limit=10&apikey={api_key}"
+        data = requests.get(url, timeout=5).json()
+        if isinstance(data, list) and len(data) > 0:
+            sorted_data = sorted(data, key=lambda x: x['date'])
+            for item in sorted_data:
+                if datetime.strptime(item['date'], '%Y-%m-%d') >= datetime.now():
+                    return datetime.strptime(item['date'], '%Y-%m-%d').strftime('%m/%d/%Y')
+    except: pass
+    return "N/A"
+
+# --- 4. FEATURED WHALE MOVES (Hardcoded) ---
 def get_global_data():
     return pd.DataFrame([
         {"Type": "🐋 WHALE", "Ticker": "PLTR", "Name": "Scion (Michael Burry)", "Move": "BIG SHORT", "Details": "Bought Puts on 5M shares", "Date": "02/14/2026"},
         {"Type": "🐋 WHALE", "Ticker": "AMZN", "Name": "Altimeter (Brad Gerstner)", "Move": "ADD", "Details": "+$400M Cloud/AI Bet", "Date": "02/14/2026"},
         {"Type": "🐋 WHALE", "Ticker": "DPZ", "Name": "Berkshire (Buffett)", "Move": "NEW BUY", "Details": "New Stake in Domino's", "Date": "02/14/2026"},
-        {"Type": "🐋 WHALE", "Ticker": "GS", "Name": "Duquesne (Druckenmiller)", "Move": "NEW BUY", "Details": "Initiated Position", "Date": "02/14/2026"},
         {"Type": "🐋 WHALE", "Ticker": "CMG", "Name": "Third Point (Dan Loeb)", "Move": "NEW BUY", "Details": "$175M New Stake", "Date": "02/14/2026"},
-        {"Type": "🐋 WHALE", "Ticker": "META", "Name": "Pershing Square (Ackman)", "Move": "NEW BUY", "Details": "$2.0B Stake Initiation", "Date": "02/11/2026"},
-        {"Type": "🏛️ POL", "Ticker": "PLTR", "Name": "Nancy Pelosi", "Move": "HOLD", "Details": "Maintaining Stake", "Date": "01/22/2026"},
+        {"Type": "🐋 WHALE", "Ticker": "META", "Name": "Pershing Sq (Ackman)", "Move": "NEW BUY", "Details": "$2.0B Stake Initiation", "Date": "02/11/2026"},
+        {"Type": "🏛️ POL", "Ticker": "NVDA", "Name": "Nancy Pelosi", "Move": "EXERCISE", "Details": "5,000 shares ($80 Strike)", "Date": "01/16/2026"},
         {"Type": "🐋 WHALE", "Ticker": "SOFI", "Name": "ARK Invest (Wood)", "Move": "BUY", "Details": "2.4M shares Add", "Date": "02/17/2026"}
     ])
-
-@st.cache_data(ttl=3600)
-def get_sp500_map():
-    url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-    try:
-        res = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
-        df = pd.read_html(StringIO(res.text))[0]
-        t_col = 'Symbol' if 'Symbol' in df.columns else 'Ticker symbol'
-        return {f"{r[t_col]} - {r['Security']}": r[t_col] for _, r in df.iterrows()}
-    except: return {"AAPL - Apple": "AAPL", "PLTR - Palantir": "PLTR", "SOFI - SoFi": "SOFI"}
-
-# C. C-SUITE INSIDER TRACKER
-def get_c_suite_buys(ticker_obj):
-    try:
-        insiders = ticker_obj.insider_purchases
-        if insiders is None or insiders.empty: return pd.DataFrame()
-        c_level_terms = ['CEO', 'CFO', 'COO', 'CTO', 'PRESIDENT', 'CHIEF', 'EXEC']
-        if 'Position' in insiders.columns:
-            c_suite = insiders[insiders['Position'].str.upper().str.contains('|'.join(c_level_terms), na=False)]
-        else: return pd.DataFrame()
-        if 'Date' in c_suite.columns:
-            c_suite['Date'] = pd.to_datetime(c_suite['Date'])
-            cutoff = datetime.now() - timedelta(days=365)
-            recent_buys = c_suite[c_suite['Date'] > cutoff]
-            return recent_buys[['Insider', 'Position', 'Date', 'Shares', 'Value']].sort_values(by='Date', ascending=False)
-        return pd.DataFrame()
-    except: return pd.DataFrame()
 
 # --- 5. SIDEBAR ---
 if 'portfolio' not in st.session_state:
@@ -151,26 +108,21 @@ for t in st.session_state['portfolio']:
         with open(PORTFOLIO_FILE, "w") as f: json.dump(st.session_state['portfolio'], f); st.rerun()
 
 st.sidebar.markdown("---")
-sp_map = get_sp500_map()
-options = ["--- Search S&P 500 ---"] + sorted(list(sp_map.keys()))
-dropdown_sel = st.sidebar.selectbox("Market Search (SPY)", options, index=0)
-direct_sel = st.sidebar.text_input("Direct Ticker Entry (e.g. BMNR, RR)").upper().strip()
-sel = direct_sel if direct_sel else sp_map.get(dropdown_sel, "")
+sel = st.sidebar.text_input("Direct Ticker Entry (e.g. BMNR)", "OPEN").upper().strip()
 
-# --- 7. MAIN INTERFACE ---
+# --- 6. MAIN INTERFACE ---
 st.title("📈 Institutional Intelligence Terminal")
 
-# A. REGULATORY WIRE
-st.header("🚨 Regulatory & Discovery Wire")
-with st.spinner("Scanning SEC Database..."):
-    sec_df = get_sec_feed(st.session_state['portfolio'])
-
-if not sec_df.empty:
-    st.subheader("🔥 Live SEC Filings (Portfolio)")
-    for index, row in sec_df.iterrows():
-        st.markdown(f"**{row['Date']}** | {row['Source']} | [{row['Description']}]({row['Link']})")
+st.header("🚨 Live Insider Action (FMP API)")
+if fmp_key:
+    with st.spinner("Pulling real-time insider trades..."):
+        insider_df = get_live_insider_feed(st.session_state['portfolio'], fmp_key)
+    if not insider_df.empty:
+        st.dataframe(insider_df, hide_index=True, use_container_width=True)
+    else:
+        st.info("No recent C-Suite purchases found for your portfolio.")
 else:
-    st.info("No recent SEC filings (13D/G/Form 4) for your portfolio.")
+    st.warning("⚠️ Paste your FMP API Key in the sidebar to unlock live Insider Data and Earnings Dates.")
 
 st.subheader("🌎 Featured 2026 Whale Moves")
 wire_df = get_global_data()
@@ -188,49 +140,30 @@ if sel:
         growth = i.get('earningsGrowth', i.get('earningsQuarterlyGrowth', i.get('forwardEpsGrowth')))
         if growth: peg = round(pe / (growth * 100), 2)
     
-    rev_growth = i.get('revenueGrowth', 0)
-    ebitda_margin = i.get('ebitdaMargins', 0)
+    rev_growth, ebitda_margin = i.get('revenueGrowth', 0), i.get('ebitdaMargins', 0)
     rule_of_40 = (rev_growth + ebitda_margin) * 100
 
-    sector = i.get('sector', 'Unknown')
-    bench = next((k for k in SECTOR_BENCHMARKS if k == sector), None)
-    val_pe = f"{((pe-SECTOR_BENCHMARKS[bench]['PE'])/SECTOR_BENCHMARKS[bench]['PE'])*100:+.0f}%" if bench and pe else "N/A"
-
     m1, m2, m3 = st.columns(3)
-    m1.metric("Price", f"${i.get('currentPrice', 'N/A')}"); m1.caption(f"Sector: **{sector}**")
+    m1.metric("Price", f"${i.get('currentPrice', 'N/A')}")
     m2.metric("Market Cap", format_num(i.get('marketCap')))
     m3.metric("Rule of 40", f"{rule_of_40:.1f}%", "Elite" if rule_of_40 >= 40 else "Sub-40")
 
     col_man, col_chart = st.columns([1, 2])
     with col_man:
-        st.subheader("⚠️ Management & Conflicts")
+        st.subheader("⚠️ Management Check")
         officers = i.get('companyOfficers', [])
         ceo = next((o.get('name') for o in officers if "CEO" in o.get('title', '').upper()), "N/A")
         if sel == "SOFI": ceo = "Anthony Noto"
         elif sel == "OPEN": ceo = "Kaz Nejatian"
         st.write(f"👤 **CEO:** {ceo}")
-        
-        st.markdown("#### 🟢 C-Suite Buys (L12M)")
-        c_buys = get_c_suite_buys(s)
-        if not c_buys.empty:
-            st.dataframe(c_buys, hide_index=True, use_container_width=True)
-        else: st.caption("No C-Level open market purchases detected.")
 
         t_hits = wire_df[wire_df['Ticker'] == sel]
         if not t_hits.empty:
             st.markdown("#### 🐋 Whale Alerts")
             for _, r in t_hits.iterrows():
                 st.warning(f"**{r['Type']}:** {r['Name']} ({r['Move']})")
-        
-        if not sec_df.empty:
-            sec_hits = sec_df[sec_df['Description'].str.contains(sel, case=False)]
-            if not sec_hits.empty:
-                st.error(f"🚨 **SEC Filing Alert:**")
-                for _, r in sec_hits.iterrows():
-                    st.write(f"[{r['Filing']}]({r['Link']}) ({r['Date']})")
 
     with col_chart:
-        st.subheader("Technical Outlook")
         h = s.history(period="1y")
         if not h.empty:
             h['MA50'] = h['Close'].rolling(50).mean(); h['MA200'] = h['Close'].rolling(200).mean(); h['RSI'] = calculate_rsi(h['Close'])
@@ -243,15 +176,7 @@ if sel:
             st.plotly_chart(fig, use_container_width=True)
 
     st.markdown("---")
-    st.subheader("📊 Industry Benchmarks & Growth Efficiency")
-    f1, f2, f3, f4, f5 = st.columns(5)
-    f1.metric("P/E Ratio", f"{pe}", val_pe); f1.caption(f"Sector Avg: {SECTOR_BENCHMARKS.get(bench, {}).get('PE', 'N/A')}")
-    f2.metric("P/S Ratio", f"{ps}"); f2.caption(f"Sector Avg: {SECTOR_BENCHMARKS.get(bench, {}).get('PS', 'N/A')}")
-    f3.metric("PEG Ratio", f"{peg if peg else 'N/A'}"); f3.caption("Undervalued: < 1.0")
-    f4.metric("Beta", i.get('beta', 1.0), "High" if i.get('beta', 1) > 1 else "Stable")
-    f5.metric("Rev Growth", f"{rev_growth*100:.1f}%", "Outperforming" if rev_growth > 0.063 else "Slowing")
-
-    st.markdown("#### 📅 Earnings Surprises & Verified Guidance")
+    st.subheader("#### 📅 Earnings Surprises & API-Verified Guidance")
     e1, e2 = st.columns(2)
     with e1:
         st.markdown("**Historical Matrix**")
@@ -262,26 +187,10 @@ if sel:
             eh_disp['Surprise %'] = eh_disp['Surprise %'].apply(lambda x: f"{x*100:.1f}%" if pd.notnull(x) else "N/A")
             st.dataframe(eh_disp, use_container_width=True)
     with e2:
-        st.markdown("**Forward Guidance (2026 Hardcoded)**")
-        HARDCODED_DATES = {"PLTR": "05/04/2026", "SOFI": "04/28/2026", "BMNR": "04/15/2026", "AMZN": "04/30/2026", "META": "04/29/2026"}
-        next_e = HARDCODED_DATES.get(sel, "N/A")
-        label = "✅ Confirmed Date"
-        if next_e == "N/A":
-            try:
-                ed = s.get_earnings_dates(limit=5)
-                if ed is not None and not ed.empty:
-                    future = ed[ed.index > datetime.now()]
-                    if not future.empty:
-                        next_e = future.index[0].strftime("%m/%d/%Y")
-                        label = "✅ Calendar Date"
-                    else:
-                        next_e = (ed.index[0] + timedelta(days=90)).strftime("%m/%d/%Y")
-                        label = "🔮 Projected (90-Day)"
-            except: pass
+        st.markdown("**Forward Guidance**")
+        next_e = get_verified_earnings(sel, fmp_key) if fmp_key else "Missing API Key"
         c_guidance = st.container(border=True)
-        c_guidance.write(f"📅 **{label}:** {next_e}")
+        c_guidance.write(f"📅 **Confirmed Next:** {next_e}")
         c_guidance.write(f"💵 **Est EPS:** ${i.get('forwardEps', 'N/A')}")
-        c_guidance.write(f"📈 **Revenue (Last Q):** {format_num(i.get('totalRevenue', 0))}")
+        c_guidance.write(f"📈 **Revenue Growth (YoY):** {rev_growth*100:.1f}%")
         c_guidance.write(f"🎯 **Price Target:** ${i.get('targetMeanPrice', 'N/A')}")
-
-    with st.expander("Read Business Summary"): st.write(i.get('longBusinessSummary', 'N/A'))
